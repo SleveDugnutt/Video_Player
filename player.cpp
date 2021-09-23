@@ -61,18 +61,19 @@ int main(int argc, char *argv[]){
     double scale = 0.6;
     int Window_WIDTH = WIDTH * scale;
     int Window_HEIGHT = HEIGHT * scale;
+    AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGB24;
     SwsContext *torgba = sws_getContext(WIDTH, HEIGHT, video_decoderContxt->pix_fmt,
-                                        Window_WIDTH, Window_HEIGHT, AV_PIX_FMT_YUV420P,
+                                        Window_WIDTH, Window_HEIGHT, dst_pix_fmt,
                                         SWS_BICUBIC, NULL, NULL, NULL);
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
-    AVFrame *yuvframe = av_frame_alloc();
-    yuvframe->width = Window_WIDTH;
-    yuvframe->height = Window_HEIGHT;
-    yuvframe->format = AV_PIX_FMT_YUV420P;
-    ret = av_frame_get_buffer(yuvframe, 0);
-    uint8_t *buf = (uint8_t*) av_malloc(av_image_get_buffer_size(AV_PIX_FMT_YUV420P, Window_WIDTH, Window_HEIGHT, 1));
-    ret = av_image_fill_arrays(yuvframe->data, yuvframe->linesize, buf, AV_PIX_FMT_YUV420P, Window_WIDTH, Window_HEIGHT, 1);
+    AVFrame *dstframe = av_frame_alloc();
+    dstframe->width = Window_WIDTH;
+    dstframe->height = Window_HEIGHT;
+    dstframe->format = dst_pix_fmt;
+    ret = av_frame_get_buffer(dstframe, 0);
+    uint8_t *buf = (uint8_t*) av_malloc(av_image_get_buffer_size(dst_pix_fmt, Window_WIDTH, Window_HEIGHT, 1));
+    ret = av_image_fill_arrays(dstframe->data, dstframe->linesize, buf, dst_pix_fmt, Window_WIDTH, Window_HEIGHT, 1);
     //SDL part
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0){
         std::cout << "Cound not initialize SDL2" << std::endl;
@@ -82,8 +83,8 @@ int main(int argc, char *argv[]){
                                           SDL_WINDOWPOS_CENTERED,
                                           Window_WIDTH, Window_HEIGHT, 0);
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
-    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_IYUV,
-                                             SDL_TEXTUREACCESS_TARGET,
+    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24,
+                                             SDL_TEXTUREACCESS_STREAMING,
                                              Window_WIDTH, Window_HEIGHT);
     SDL_Rect rect;
     rect.w = Window_WIDTH;
@@ -132,11 +133,8 @@ int main(int argc, char *argv[]){
                     if (ret >= 0){
                         delay = spf * (1 + 0.5 * frame->repeat_pict);
                         sws_scale(torgba, frame->data, frame->linesize, 0, frame->height,
-                                  yuvframe->data, yuvframe->linesize);
-                        SDL_UpdateYUVTexture(texture, &rect,
-                                             yuvframe->data[0], yuvframe->linesize[0],
-                                             yuvframe->data[1], yuvframe->linesize[1],
-                                             yuvframe->data[2], yuvframe->linesize[2]);
+                                  dstframe->data, dstframe->linesize);
+                        SDL_UpdateTexture(texture, &rect, dstframe->data[0], dstframe->linesize[0]);
                         SDL_RenderClear(renderer);
                         SDL_RenderCopy(renderer, texture, NULL, &rect);
                         SDL_RenderPresent(renderer);
@@ -159,7 +157,7 @@ int main(int argc, char *argv[]){
         }       
     }
     av_frame_free(&frame);
-    av_frame_free(&yuvframe);
+    av_frame_free(&dstframe);
     av_packet_free(&packet);
     avcodec_free_context(&video_decoderContxt);
     avcodec_free_context(&audio_decoderContxt);

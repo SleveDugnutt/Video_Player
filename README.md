@@ -3,4 +3,5 @@ The goal of this repository is to make a video player using SDL2 and FFmpeg API.
 It sucks for now.
 # Problems
 - video is playing fast
-- sound is so noisy
+- sound is so noisy\
+  ->This noise problem seems to be mostly solved although noises are still heard

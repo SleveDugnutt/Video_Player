@@ -9,64 +9,85 @@ extern "C"{
     #include <libavformat/avformat.h>
     #include <libavcodec/avcodec.h>
     #include <libavutil/imgutils.h>
+    #include <libavutil/opt.h>
     #include <libswscale/swscale.h>
     #include <libswresample/swresample.h>
 }
+#include "decode_frames.hpp"
 
 int main(int argc, char *argv[]){
     const char *input = argv[1];
-    AVFormatContext *inputFmtContxt = NULL;
-    //AVFormatContext *audioFmtContxt = NULL;
-    const AVCodec *video_decoder = NULL;
-    const AVCodec *audio_decoder = NULL;
-    AVCodecContext *video_decoderContxt = 0;
-    AVCodecContext *audio_decoderContxt = 0;
     int ret = 0;
-    int video_stream_index = -1;
-    int audio_stream_index = -1;
-    ret = avformat_open_input(&inputFmtContxt, input, NULL, NULL);
-    //ret = avformat_open_input(&audioFmtContxt, input, NULL, NULL);
+    AVFormatContext *inputFmtCtx = NULL;
+    ret = avformat_open_input(&inputFmtCtx, input, NULL, NULL);
     if (ret < 0){
-        std::cout << "Could not open input video" << std::endl;
+        std::cout << "Could not open input file" << std::endl;
     }
-    ret = avformat_find_stream_info(inputFmtContxt, NULL);
+    ret = avformat_find_stream_info(inputFmtCtx, NULL);
     if (ret < 0){
         std::cout << "Could not find stream info" << std::endl;
     }
-    //prepare decoder
-    for (int i=0; i<(int)inputFmtContxt->nb_streams; ++i){
-        AVStream *in_stream = inputFmtContxt->streams[i];
-        AVCodecParameters *in_par = in_stream->codecpar;
-        if (in_par->codec_type == AVMEDIA_TYPE_VIDEO){
+    int video_stream_index = -1;
+    int audio_stream_index = -1;
+    const AVCodec *videoDecoder = NULL;
+    const AVCodec *audioDecoder = NULL;
+    AVCodecContext *videoDecodeCtx = NULL;
+    AVCodecContext *audioDecodeCtx = NULL;
+    for (int i=0; i<(int)inputFmtCtx->nb_streams; ++i){
+        AVStream *stream = inputFmtCtx->streams[i];
+        AVCodecParameters *codecpar = stream->codecpar;
+        if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO){
             video_stream_index = i;
-            video_decoder = avcodec_find_decoder(in_par->codec_id);
-            video_decoderContxt = avcodec_alloc_context3(video_decoder);
-            avcodec_parameters_to_context(video_decoderContxt, in_par);
-            avcodec_open2(video_decoderContxt, video_decoder, NULL);
+            videoDecoder = avcodec_find_decoder(codecpar->codec_id);
+            videoDecodeCtx = avcodec_alloc_context3(videoDecoder);
+            avcodec_parameters_to_context(videoDecodeCtx, codecpar);
+            avcodec_open2(videoDecodeCtx, videoDecoder, NULL);
         }
-        if (in_par->codec_type == AVMEDIA_TYPE_AUDIO){
+        if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
             audio_stream_index = i;
-            audio_decoder = avcodec_find_decoder(in_par->codec_id);
-            audio_decoderContxt = avcodec_alloc_context3(audio_decoder);
-            avcodec_parameters_to_context(audio_decoderContxt, in_par);
-            avcodec_open2(audio_decoderContxt, audio_decoder, NULL);
+            audioDecoder = avcodec_find_decoder(codecpar->codec_id);
+            audioDecodeCtx = avcodec_alloc_context3(audioDecoder);
+            avcodec_parameters_to_context(audioDecodeCtx, codecpar);
+            avcodec_open2(audioDecodeCtx, audioDecoder, NULL);
         }
     }
-    int delay;
-    double framerate = av_q2d(video_decoderContxt->framerate);
-    double spf = 1 / framerate;
-    //double timebase = av_q2d(video_decoderContxt->time_base);
-    int WIDTH = video_decoderContxt->width;
-    int HEIGHT = video_decoderContxt->height;
+    int WIDTH = videoDecodeCtx->width;
+    int HEIGHT = videoDecodeCtx->height;
+    double framerate = av_q2d(videoDecodeCtx->framerate);
+    double timebase = av_q2d(videoDecodeCtx->time_base);
+    int sample_rate = audioDecodeCtx->sample_rate;
+    int channels = audioDecodeCtx->channels;
+    AVPacket *packet = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
+    /*
+    AVFrame *rgbframe = av_frame_alloc();
+    rgbframe->width = WIDTH;
+    rgbframe->height = HEIGHT;
+    rgbframe->format = AV_PIX_FMT_RGB24;
+    uint8_t *buf = (uint8_t*) av_malloc(av_image_get_buffer_size(AV_PIX_FMT_RGB24, WIDTH, HEIGHT, 1));
+    ret = av_image_fill_arrays(rgbframe->data, rgbframe->linesize, buf, AV_PIX_FMT_RGB24, WIDTH, HEIGHT, 1);
+    SwsContext *torgb = sws_getContext(WIDTH, HEIGHT, videoDecodeCtx->pix_fmt,
+                                       WIDTH, HEIGHT, AV_PIX_FMT_RGB24,
+                                       SWS_BICUBIC, NULL, NULL, NULL);
+    */
     double scale = 0.6;
     int Window_WIDTH = WIDTH * scale;
     int Window_HEIGHT = HEIGHT * scale;
     AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGB24;
-    SwsContext *torgba = sws_getContext(WIDTH, HEIGHT, video_decoderContxt->pix_fmt,
+    SwsContext *scaler = sws_getContext(WIDTH, HEIGHT, videoDecodeCtx->pix_fmt,
                                         Window_WIDTH, Window_HEIGHT, dst_pix_fmt,
                                         SWS_BICUBIC, NULL, NULL, NULL);
-    AVPacket *packet = av_packet_alloc();
-    AVFrame *frame = av_frame_alloc();
+    int dst_samplerate = 44100;
+    AVSampleFormat dst_smp_fmt = AV_SAMPLE_FMT_S16;
+    SwrContext *resampler = swr_alloc_set_opts(NULL, 
+                                               audioDecodeCtx->channel_layout,
+                                               dst_smp_fmt,
+                                               dst_samplerate,
+                                               audioDecodeCtx->channel_layout,
+                                               audioDecodeCtx->sample_fmt,
+                                               audioDecodeCtx->sample_rate,
+                                               0, NULL);
+    swr_init(resampler);
     AVFrame *dstframe = av_frame_alloc();
     dstframe->width = Window_WIDTH;
     dstframe->height = Window_HEIGHT;
@@ -74,6 +95,12 @@ int main(int argc, char *argv[]){
     ret = av_frame_get_buffer(dstframe, 0);
     uint8_t *buf = (uint8_t*) av_malloc(av_image_get_buffer_size(dst_pix_fmt, Window_WIDTH, Window_HEIGHT, 1));
     ret = av_image_fill_arrays(dstframe->data, dstframe->linesize, buf, dst_pix_fmt, Window_WIDTH, Window_HEIGHT, 1);
+    AVFrame *audioframe = av_frame_alloc();
+    audioframe->channel_layout = audioDecodeCtx->channel_layout;
+    audioframe->sample_rate = sample_rate;
+    audioframe->format = dst_smp_fmt;
+    ret = av_frame_get_buffer(audioframe, 0);
+    //collect frames
     //SDL part
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0){
         std::cout << "Cound not initialize SDL2" << std::endl;
@@ -93,15 +120,18 @@ int main(int argc, char *argv[]){
     rect.y = 0;
     SDL_Event event;
     SDL_AudioDeviceID dev;
-    SDL_AudioSpec wanted, spec;
-    SDL_zero(wanted);
-    SDL_zero(spec);
-    wanted.freq = audio_decoderContxt->sample_rate;
-    wanted.channels = audio_decoderContxt->channels;
-    dev = SDL_OpenAudioDevice(NULL, 0, &wanted, &spec, 0);
+    SDL_AudioSpec want, have;
+    SDL_zero(want);
+    SDL_zero(have);
+    want.freq = dst_samplerate;
+    want.channels = channels;
+    want.format = AUDIO_S16SYS;
+    dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     SDL_PauseAudioDevice(dev, 0);
     bool running = true;
     bool playing = true;
+    //start playing
+    double delay = 0;
     while (running){
         while (playing){
             while (SDL_PollEvent(&event)){
@@ -116,54 +146,63 @@ int main(int argc, char *argv[]){
                     break;
                 }
             }
-            ret = av_read_frame(inputFmtContxt, packet);
+            ret = av_read_frame(inputFmtCtx, packet);
             if (ret < 0){
                 running = false;
-                playing = false;
                 break;
             }
-            AVStream *stream = inputFmtContxt->streams[packet->stream_index];
+            AVStream *stream = inputFmtCtx->streams[packet->stream_index];
             if (stream->codecpar->codec_type == video_stream_index){
-                ret = avcodec_send_packet(video_decoderContxt, packet);
+                ret = avcodec_send_packet(videoDecodeCtx, packet);
                 while (ret >= 0){
-                    ret = avcodec_receive_frame(video_decoderContxt, frame);
-                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
-                        break;
-                    }
-                    if (ret >= 0){
-                        delay = spf * (1 + 0.5 * frame->repeat_pict);
-                        sws_scale(torgba, frame->data, frame->linesize, 0, frame->height,
+                    ret = avcodec_receive_frame(videoDecodeCtx, frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
+                    else if (ret >= 0){
+                        sws_scale(scaler, 
+                                  frame->data, frame->linesize,
+                                  0, frame->height, 
                                   dstframe->data, dstframe->linesize);
                         SDL_UpdateTexture(texture, &rect, dstframe->data[0], dstframe->linesize[0]);
                         SDL_RenderClear(renderer);
                         SDL_RenderCopy(renderer, texture, NULL, &rect);
                         SDL_RenderPresent(renderer);
-                        SDL_Delay(1000 * delay);
+                        //SDL_Delay(1000 / framerate);
                     }
                 }
-                av_frame_unref(frame);
             }
             if (stream->codecpar->codec_type == audio_stream_index){
-                ret = avcodec_send_packet(audio_decoderContxt, packet);
+                ret = avcodec_send_packet(audioDecodeCtx, packet);
                 while (ret >= 0){
-                    ret = avcodec_receive_frame(audio_decoderContxt, frame);
+                    ret = avcodec_receive_frame(audioDecodeCtx, frame);
                     if (ret >= 0){
-                        SDL_QueueAudio(dev, frame->data[0], frame->linesize[0]);       
+                        int dst_samples = frame->channels * av_rescale_rnd(swr_get_delay(resampler, framerate) + frame->nb_samples,
+                                                                           dst_samplerate, 
+                                                                           frame->sample_rate,
+                                                                           AV_ROUND_UP);
+                        uint8_t *audiobuf = NULL;
+                        ret = av_samples_alloc(&audiobuf, NULL, 1, dst_samples,
+                                               dst_smp_fmt, 1);
+                        av_samples_fill_arrays(audioframe->data, audioframe->linesize, audiobuf,
+                                               1, dst_samples, dst_smp_fmt, 1);
+                        dst_samples = swr_convert(resampler, 
+                                                  audioframe->data, dst_samples,
+                                                  (const uint8_t**) frame->data, frame->nb_samples);
+                        SDL_QueueAudio(dev, audioframe->data[0], audioframe->linesize[0]);    
                     }
                 }
                 av_frame_unref(frame);
             }
-            av_packet_unref(packet);
         }       
     }
-    av_frame_free(&frame);
-    av_frame_free(&dstframe);
     av_packet_free(&packet);
-    avcodec_free_context(&video_decoderContxt);
-    avcodec_free_context(&audio_decoderContxt);
-    avformat_free_context(inputFmtContxt);
+    av_frame_free(&frame);
+    //av_frame_free(&rgbframe);
+    av_frame_free(&dstframe);
+    av_frame_free(&audioframe);
     av_freep(&buf);
-    sws_freeContext(torgba);
+    //sws_freeContext(torgb);
+    sws_freeContext(scaler);
+    swr_free(&resampler);
     SDL_CloseAudioDevice(dev);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

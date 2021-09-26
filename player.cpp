@@ -41,6 +41,7 @@ int main(int argc, char *argv[]){
             videoDecoder = avcodec_find_decoder(codecpar->codec_id);
             videoDecodeCtx = avcodec_alloc_context3(videoDecoder);
             avcodec_parameters_to_context(videoDecodeCtx, codecpar);
+            videoDecodeCtx->time_base = stream->time_base;
             avcodec_open2(videoDecodeCtx, videoDecoder, NULL);
         }
         if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
@@ -48,13 +49,15 @@ int main(int argc, char *argv[]){
             audioDecoder = avcodec_find_decoder(codecpar->codec_id);
             audioDecodeCtx = avcodec_alloc_context3(audioDecoder);
             avcodec_parameters_to_context(audioDecodeCtx, codecpar);
+            audioDecodeCtx->time_base = stream->time_base;
             avcodec_open2(audioDecodeCtx, audioDecoder, NULL);
         }
     }
     int WIDTH = videoDecodeCtx->width;
     int HEIGHT = videoDecodeCtx->height;
     double framerate = av_q2d(videoDecodeCtx->framerate);
-    double timebase = av_q2d(videoDecodeCtx->time_base);
+    //double video_timebase = av_q2d(videoDecodeCtx->time_base);
+    //double audio_timebase = av_q2d(audioDecodeCtx->time_base);
     int sample_rate = audioDecodeCtx->sample_rate;
     int channels = audioDecodeCtx->channels;
     AVPacket *packet = av_packet_alloc();
@@ -86,7 +89,8 @@ int main(int argc, char *argv[]){
                                                audioDecodeCtx->channel_layout,
                                                audioDecodeCtx->sample_fmt,
                                                audioDecodeCtx->sample_rate,
-                                               0, NULL);
+                                               0, 
+                                               NULL);
     swr_init(resampler);
     AVFrame *dstframe = av_frame_alloc();
     dstframe->width = Window_WIDTH;
@@ -97,7 +101,7 @@ int main(int argc, char *argv[]){
     ret = av_image_fill_arrays(dstframe->data, dstframe->linesize, buf, dst_pix_fmt, Window_WIDTH, Window_HEIGHT, 1);
     AVFrame *audioframe = av_frame_alloc();
     audioframe->channel_layout = audioDecodeCtx->channel_layout;
-    audioframe->sample_rate = sample_rate;
+    audioframe->sample_rate = dst_samplerate;
     audioframe->format = dst_smp_fmt;
     ret = av_frame_get_buffer(audioframe, 0);
     //collect frames
@@ -132,6 +136,8 @@ int main(int argc, char *argv[]){
     bool playing = true;
     //start playing
     double delay = 0;
+    //double video_pts = 0;
+    //double audio_pts = 0;
     while (running){
         while (playing){
             while (SDL_PollEvent(&event)){
@@ -158,15 +164,25 @@ int main(int argc, char *argv[]){
                     ret = avcodec_receive_frame(videoDecodeCtx, frame);
                     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                     else if (ret >= 0){
+                        delay = (1 + 0.5 * frame->repeat_pict) / framerate;
                         sws_scale(scaler, 
-                                  frame->data, frame->linesize,
-                                  0, frame->height, 
-                                  dstframe->data, dstframe->linesize);
-                        SDL_UpdateTexture(texture, &rect, dstframe->data[0], dstframe->linesize[0]);
+                                  frame->data, 
+                                  frame->linesize,
+                                  0, 
+                                  frame->height, 
+                                  dstframe->data, 
+                                  dstframe->linesize);
+                        SDL_UpdateTexture(texture, 
+                                          &rect, 
+                                          dstframe->data[0], 
+                                          dstframe->linesize[0]);
                         SDL_RenderClear(renderer);
-                        SDL_RenderCopy(renderer, texture, NULL, &rect);
+                        SDL_RenderCopy(renderer, 
+                                       texture, 
+                                       NULL, 
+                                       &rect);
                         SDL_RenderPresent(renderer);
-                        //SDL_Delay(1000 / framerate);
+                        //SDL_Delay(1000 * delay);
                     }
                 }
             }
@@ -180,13 +196,24 @@ int main(int argc, char *argv[]){
                                                                            frame->sample_rate,
                                                                            AV_ROUND_UP);
                         uint8_t *audiobuf = NULL;
-                        ret = av_samples_alloc(&audiobuf, NULL, 1, dst_samples,
-                                               dst_smp_fmt, 1);
-                        av_samples_fill_arrays(audioframe->data, audioframe->linesize, audiobuf,
-                                               1, dst_samples, dst_smp_fmt, 1);
-                        dst_samples = swr_convert(resampler, 
-                                                  audioframe->data, dst_samples,
-                                                  (const uint8_t**) frame->data, frame->nb_samples);
+                        ret = av_samples_alloc(&audiobuf, 
+                                               NULL, 
+                                               1, 
+                                               dst_samples,
+                                               dst_smp_fmt, 
+                                               1);
+                        dst_samples = frame->channels * swr_convert(resampler, 
+                                                                    &audiobuf, 
+                                                                    dst_samples,
+                                                                    (const uint8_t**) frame->data, 
+                                                                    frame->nb_samples);
+                        ret = av_samples_fill_arrays(audioframe->data, 
+                                                     audioframe->linesize, 
+                                                     audiobuf,
+                                                     1, 
+                                                     dst_samples, 
+                                                     dst_smp_fmt, 
+                                                     1);
                         SDL_QueueAudio(dev, audioframe->data[0], audioframe->linesize[0]);    
                     }
                 }

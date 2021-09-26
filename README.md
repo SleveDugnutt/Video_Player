@@ -4,4 +4,4 @@ It sucks for now.
 # Problems
 - video is playing fast
 - sound is so noisy\
-  ->This noise problem seems to be solved
+  ->This noise problem seems to be fixed

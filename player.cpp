@@ -15,6 +15,8 @@ extern "C"{
 }
 #include "decode_frames.hpp"
 
+
+
 int main(int argc, char *argv[]){
     const char *input = argv[1];
     int ret = 0;
@@ -56,9 +58,6 @@ int main(int argc, char *argv[]){
     int WIDTH = videoDecodeCtx->width;
     int HEIGHT = videoDecodeCtx->height;
     double framerate = av_q2d(videoDecodeCtx->framerate);
-    //double video_timebase = av_q2d(videoDecodeCtx->time_base);
-    //double audio_timebase = av_q2d(audioDecodeCtx->time_base);
-    int sample_rate = audioDecodeCtx->sample_rate;
     int channels = audioDecodeCtx->channels;
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
@@ -158,12 +157,14 @@ int main(int argc, char *argv[]){
                 break;
             }
             AVStream *stream = inputFmtCtx->streams[packet->stream_index];
+            double timebase = av_q2d(stream->time_base);
             if (stream->codecpar->codec_type == video_stream_index){
                 ret = avcodec_send_packet(videoDecodeCtx, packet);
                 while (ret >= 0){
                     ret = avcodec_receive_frame(videoDecodeCtx, frame);
                     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                     else if (ret >= 0){
+                        //std::cout << "video time " << timebase* (double)frame->best_effort_timestamp << "\n";
                         delay = (1 + 0.5 * frame->repeat_pict) / framerate;
                         sws_scale(scaler, 
                                   frame->data, 
@@ -191,7 +192,8 @@ int main(int argc, char *argv[]){
                 while (ret >= 0){
                     ret = avcodec_receive_frame(audioDecodeCtx, frame);
                     if (ret >= 0){
-                        int dst_samples = frame->channels * av_rescale_rnd(swr_get_delay(resampler, framerate) + frame->nb_samples,
+                        //std::cout << "audio time " << timebase* (double)frame->best_effort_timestamp << "\n";
+                        int dst_samples = frame->channels * av_rescale_rnd(swr_get_delay(resampler, frame->sample_rate) + frame->nb_samples,
                                                                            dst_samplerate, 
                                                                            frame->sample_rate,
                                                                            AV_ROUND_UP);

@@ -15,8 +15,6 @@ extern "C"{
 }
 #include "decode_frames.hpp"
 
-
-
 int main(int argc, char *argv[]){
     const char *input = argv[1];
     int ret = 0;
@@ -44,6 +42,7 @@ int main(int argc, char *argv[]){
             videoDecodeCtx = avcodec_alloc_context3(videoDecoder);
             avcodec_parameters_to_context(videoDecodeCtx, codecpar);
             videoDecodeCtx->time_base = stream->time_base;
+            videoDecodeCtx->framerate = stream->avg_frame_rate;
             avcodec_open2(videoDecodeCtx, videoDecoder, NULL);
         }
         if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO){
@@ -57,7 +56,6 @@ int main(int argc, char *argv[]){
     }
     int WIDTH = videoDecodeCtx->width;
     int HEIGHT = videoDecodeCtx->height;
-    double framerate = av_q2d(videoDecodeCtx->framerate);
     int channels = audioDecodeCtx->channels;
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
@@ -72,9 +70,9 @@ int main(int argc, char *argv[]){
                                        WIDTH, HEIGHT, AV_PIX_FMT_RGB24,
                                        SWS_BICUBIC, NULL, NULL, NULL);
     */
-    double scale = 0.6;
-    int Window_WIDTH = WIDTH * scale;
-    int Window_HEIGHT = HEIGHT * scale;
+    //double scale = 0.6;
+    int Window_WIDTH = 1280;
+    int Window_HEIGHT = 720;
     AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGB24;
     SwsContext *scaler = sws_getContext(WIDTH, HEIGHT, videoDecodeCtx->pix_fmt,
                                         Window_WIDTH, Window_HEIGHT, dst_pix_fmt,
@@ -134,10 +132,8 @@ int main(int argc, char *argv[]){
     bool running = true;
     bool playing = true;
     //start playing
-    double delay = 0;
-    //double video_pts = 0;
-    //double audio_pts = 0;
     while (running){
+        auto T1 = std::chrono::high_resolution_clock::now();
         while (playing){
             while (SDL_PollEvent(&event)){
                 if (event.type == SDL_QUIT){
@@ -164,8 +160,12 @@ int main(int argc, char *argv[]){
                     ret = avcodec_receive_frame(videoDecodeCtx, frame);
                     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                     else if (ret >= 0){
-                        //std::cout << "video time " << timebase* (double)frame->best_effort_timestamp << "\n";
-                        delay = (1 + 0.5 * frame->repeat_pict) / framerate;
+                        double video_time = (double)frame->best_effort_timestamp * timebase * 1000;
+                        while (true){
+                            auto T2 = std::chrono::high_resolution_clock::now();
+                            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(T2 - T1).count();
+                            if (elapsed >= video_time) break;
+                        }
                         sws_scale(scaler, 
                                   frame->data, 
                                   frame->linesize,
@@ -183,7 +183,6 @@ int main(int argc, char *argv[]){
                                        NULL, 
                                        &rect);
                         SDL_RenderPresent(renderer);
-                        //SDL_Delay(1000 * delay);
                     }
                 }
             }
@@ -192,7 +191,6 @@ int main(int argc, char *argv[]){
                 while (ret >= 0){
                     ret = avcodec_receive_frame(audioDecodeCtx, frame);
                     if (ret >= 0){
-                        //std::cout << "audio time " << timebase* (double)frame->best_effort_timestamp << "\n";
                         int dst_samples = frame->channels * av_rescale_rnd(swr_get_delay(resampler, frame->sample_rate) + frame->nb_samples,
                                                                            dst_samplerate, 
                                                                            frame->sample_rate,
@@ -232,6 +230,9 @@ int main(int argc, char *argv[]){
     //sws_freeContext(torgb);
     sws_freeContext(scaler);
     swr_free(&resampler);
+    avformat_free_context(inputFmtCtx);
+    avcodec_free_context(&videoDecodeCtx);
+    avcodec_free_context(&audioDecodeCtx);
     SDL_CloseAudioDevice(dev);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

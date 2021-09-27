@@ -13,7 +13,6 @@ extern "C"{
     #include <libswscale/swscale.h>
     #include <libswresample/swresample.h>
 }
-#include "decode_frames.hpp"
 
 int main(int argc, char *argv[]){
     const char *input = argv[1];

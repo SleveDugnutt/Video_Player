@@ -132,7 +132,7 @@ int main(int argc, char *argv[]){
     bool playing = true;
     //start playing
     while (running){
-        auto T1 = std::chrono::high_resolution_clock::now();
+        uint32_t start = SDL_GetTicks();
         while (playing){
             while (SDL_PollEvent(&event)){
                 if (event.type == SDL_QUIT){
@@ -159,10 +159,9 @@ int main(int argc, char *argv[]){
                     ret = avcodec_receive_frame(videoDecodeCtx, frame);
                     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                     else if (ret >= 0){
-                        double video_time = (double)frame->best_effort_timestamp * timebase * 1000;
+                        uint32_t video_time = (double)frame->best_effort_timestamp * timebase * 1000;
                         while (true){
-                            auto T2 = std::chrono::high_resolution_clock::now();
-                            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(T2 - T1).count();
+                            uint32_t elapsed = SDL_GetTicks() - start;
                             if (elapsed >= video_time) break;
                         }
                         sws_scale(scaler, 
